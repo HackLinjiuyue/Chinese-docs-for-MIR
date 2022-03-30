@@ -234,8 +234,49 @@ MIR已经实现了一个保守方案，并且也是基于代码块的。在程�
 
 当我们使用保守基础块特化时，函数代码块在基础块开头切换到一个依赖变量特性值的特定地址上，并且可以由不同的方式来实现，比如哈希表。任何切换方式都比一条跳转指令更低效。不过，我们不能在一个函数中仅用几个简单的跳转块来替代切换过程，因为在MIR中一个函数是以其代码块的地址来表示的，且函数可以被赋值和比较，所以我们需要确保函数和其代码块是一对一的关系。
 
-保守基础块特化的函数代码块重定向到为基础块生成特化机器代码的地址，或是一个已经生成的特化代码地址。一个函数调用的同时，会通过一些不被被调用函数暂存的寄存器（暂存的由ABI 应用程序二进制接口指定），传递调用参数的特性值。
+保守特化基础块的函数代码块重定向到为基础块生成特化机器代码的地址，或是一个已经生成的特化代码地址。一个函数调用的同时，会通过一些不被被调用函数暂存的寄存器（暂存的由ABI 应用程序二进制接口指定），传递调用参数的特性值。
 
-The function thunk for lazy basic block versioning redirects to a machine code generator of a basic block version or to already-generated machine code of that version. A function call also passes an identifier of the properties of call arguments through some register that is not saved by a called function according to the application binary interface (ABI) used.
+一开始，一个函数代码块重定向到一个以特定方式运行的机器代码生成器，优化函数但不生成代码，而是为函数生成第一个特化基础块，使函数代码块重定向到特化基础块生成器并调用函数。后续代码则会在有必要做新的特化时修改函数代码块。
 
-Initially, a function thunk redirects to a machine code generator, which works in a special mode. It only optimizes the function but does not generate machine code. Instead, it creates a version of the function's first basic block, redirects the function thunk to the basic block version generator, and calls it. The next calls modify the function thunk whenever a new basic block version is necessary. Figure 4 illustrates how the function thunk changes when the limit for the number of basic block versions is three.
+```
+执行代码：
+{
+    temp2=特性值 id1
+    代码块(参数)
+}
+{
+    temp2=特性值 id2
+    代码块(参数)
+}
+{
+    temp2=特性值 id3
+    代码块(参数)
+}
+
+代码块：
+{
+    temp=基础块
+    jump 基础块生成器
+}
+{
+    if(temp2==特性值 id1)jump 特化基础块1
+    temp=基础块
+    jump 基础块生成器
+}
+{
+    if(temp2==特性值 id1)jump 特化基础块1
+    if(temp2==特性值 id2)jump 特化基础块2
+    temp=基础块
+    jump 基础块生成器
+}
+{
+    if(temp2==特性值 id1)jump 特化基础块1
+    if(temp2==特性值 id2)jump 特化基础块2
+    jump 通用基础块
+}
+```
+
+特化基础块生成器处理MIR特性值指令，基于给定的特性值做代码优化，并为其生成机器代码。它会从当前基础块的末尾开始，查找后续具有相应特性值的基础块并在这些基础块的末尾添加跳转到生成的机器代码的指令。
+
+如果特化基础块生成器找不到一个基础块的后续基础块，它会创建这些。生成器会在当前特化基础块的机器代码末尾添加跳转到新代码块的指令，并继续执行当前特化块的机器代码。当原来的特化基础块内有个间接跳转，或是多余一种情况的MIR切换指令有着相同的目标，基础块间的跳转仍然会由基础代码块来实现。
+
