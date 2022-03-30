@@ -209,7 +209,10 @@ res = rb_fix_plus_fix(res, v4);
 
 如图所示，在启动x86-64上的C-to-MIR编译器时（大概3万行C代码），在编译器所有函数的基础块中至少执行过一次的且特化了的只有51%（14737/29131），而编译器所有基础块中只有18%（14737/81799）。
 
-(图)
+原图数据：上述例子生成的基础块数量
+* 81799（所有基础块）
+* 29131（保守函数基础块数）
+* 14737（保守基础块数）
 
 所以我第一个为MIR实现保守基础块特化这点是没有任何疑问的。
 
@@ -217,4 +220,22 @@ res = rb_fix_plus_fix(res, v4);
 所有MIR函数都是基于运行时生成代码块的间接调用，块中经常只有1到2条机器指令，而代码块能够让任意MIR函数更轻松地修改机器代码。例如，我们从特化代码切换到去优化代码时就需要用到。
 
 MIR已经实现了一个保守方案，并且也是基于代码块的。在程序开始执行时，所有函数代码块都会重定向到机器代码的生成器。当一个函数被初次调用时，MIR代码生成器会为其生成优化后的代码；函数块接下来会重定向到生成的机器代码并往后执行。
+```
+执行路径：代码块(参数)
+代码块：
+{
+    temp=函数
+    goto 函数生成器
+}
+{
+    goto 生成后函数
+}
+```
 
+当我们使用保守基础块特化时，函数代码块在基础块开头切换到一个依赖变量特性值的特定地址上，并且可以由不同的方式来实现，比如哈希表。任何切换方式都比一条跳转指令更低效。不过，我们不能在一个函数中仅用几个简单的跳转块来替代切换过程，因为在MIR中一个函数是以其代码块的地址来表示的，且函数可以被赋值和比较，所以我们需要确保函数和其代码块是一对一的关系。
+
+保守基础块特化的函数代码块重定向到为基础块生成特化机器代码的地址，或是一个已经生成的特化代码地址。一个函数调用的同时，会通过一些不被被调用函数暂存的寄存器（暂存的由ABI 应用程序二进制接口指定），传递调用参数的特性值。
+
+The function thunk for lazy basic block versioning redirects to a machine code generator of a basic block version or to already-generated machine code of that version. A function call also passes an identifier of the properties of call arguments through some register that is not saved by a called function according to the application binary interface (ABI) used.
+
+Initially, a function thunk redirects to a machine code generator, which works in a special mode. It only optimizes the function but does not generate machine code. Instead, it creates a version of the function's first basic block, redirects the function thunk to the basic block version generator, and calls it. The next calls modify the function thunk whenever a new basic block version is necessary. Figure 4 illustrates how the function thunk changes when the limit for the number of basic block versions is three.
